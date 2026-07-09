@@ -3546,8 +3546,8 @@ function recomputeWatchlist(){
   }
   function _bcSortKey(r){
     return {
-      dMax: Math.max(_bcTS(r.nkt), _bcTS(r.nd)),
-      idNum: _bcIdNum(r)
+      idNum: _bcIdNum(r),                             // PRIMARY: ID phiếu (BC-1182 > BC-1179 = tạo sau)
+      dMax: Math.max(_bcTS(r.nkt), _bcTS(r.nd))       // FALLBACK: dùng khi 2 phiếu không phân biệt được ID (rare)
     };
   }
   const byMachine={};
@@ -3556,9 +3556,12 @@ function recomputeWatchlist(){
     const existing = byMachine[mmKey];
     if(!existing){ byMachine[mmKey]=r; return; }
     const kR = _bcSortKey(r), kE = _bcSortKey(existing);
-    // Ưu tiên dMax lớn hơn; nếu bằng → ưu tiên ID số lớn hơn (phiếu tạo sau)
-    if(kR.dMax > kE.dMax) byMachine[mmKey]=r;
-    else if(kR.dMax === kE.dMax && kR.idNum > kE.idNum) byMachine[mmKey]=r;
+    // FIX V753: dùng ID phiếu làm PRIMARY, ngày làm fallback.
+    // Lý do: nkt (Ngày KT) của BC dài ngày (như 897 giờ) có thể trễ hơn ngày BC mới,
+    // khiến logic cũ (max ngày) sai. ID phiếu tăng dần theo thứ tự tạo trên hệ thống,
+    // BC tạo sau chắc chắn có ID lớn hơn — đúng ý user "kiểm tra mã máy + kết luận".
+    if(kR.idNum > kE.idNum) byMachine[mmKey]=r;
+    else if(kR.idNum === kE.idNum && kR.dMax > kE.dMax) byMachine[mmKey]=r;
   });
   // Xây dựng WATCHLIST mới — chỉ máy có BC mới nhất kết luận warn/err
   WATCHLIST=[];
