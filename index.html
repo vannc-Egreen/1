@@ -22744,15 +22744,46 @@ console.log('[V750-fix] ✅ Approver sync fix loaded');
   setTimeout(()=>loadVT12().catch(()=>{}), 1500);
 
   /* ═════════════════ Trang "Mã vật tư" ═════════════════ */
+  // V751.3.1: Sheet "2. Danh sách máy" LÀ GỐC cho mã máy (union merge với Sheet 12 để lấy loại động cơ + đếm VT).
+  // → Máy mới thêm ở Sheet 2 tự động xuất hiện tại đây với 17 hạng mục vật tư trống (tên/đơn vị lấy từ header Sheet 12).
+  // → Khi Kỹ thuật bấm "Sửa/bổ sung" → Lưu, backend saveVatTuMay12 sẽ tự append dòng máy đó vào Sheet 12.
   function machineList(){
-    let list = [];
-    if(window.PV && PV.data && Array.isArray(PV.data.may)) list = PV.data.may;
-    else if(window.MACHINES && Array.isArray(window.MACHINES)) list = window.MACHINES;
-    return list.map(m => ({
-      maMay: String(m['Mã máy']||m.maMay||m.ma||'').trim(),
-      tenTrai: String(m['Tên trang trại']||m['Tên trại']||m.tenTrai||'').trim(),
-      loaiDong: String(m['Loại động cơ']||m['Loai dong co']||m.loaiDong||'').trim()
-    })).filter(x=>x.maMay);
+    const map = {}; // key = norm(maMay) → {maMay, tenTrai, loaiDong}
+
+    // 1) GỐC: Sheet 2 "Danh sách máy"
+    let listS2 = [];
+    if(window.PV && PV.data && Array.isArray(PV.data.may)) listS2 = PV.data.may;
+    else if(window.MACHINES && Array.isArray(window.MACHINES)) listS2 = window.MACHINES;
+    listS2.forEach(function(m){
+      const mm = String(m['Mã máy']||m.maMay||m.ma||'').trim();
+      if(!mm) return;
+      const key = norm(mm);
+      if(map[key]) return;
+      map[key] = {
+        maMay: mm,
+        tenTrai: String(m['Tên trang trại']||m['Tên trại']||m.tenTrai||'').trim(),
+        loaiDong: String(m['Loại động cơ']||m['Loai dong co']||m.loaiDong||'').trim()
+      };
+    });
+
+    // 2) UNION: bổ sung mã máy chỉ có ở Sheet 12 (nếu có) — phòng lệch dữ liệu. Ưu tiên loạiDộngCơ Sheet 2, fallback Sheet 12.
+    if(window.VT12_CACHE && VT12_CACHE.loaded && Array.isArray(VT12_CACHE.rows)){
+      VT12_CACHE.rows.forEach(function(r){
+        const mm = String(r.maMay||'').trim();
+        if(!mm) return;
+        const key = norm(mm);
+        if(!map[key]){
+          map[key] = { maMay: mm, tenTrai: '', loaiDong: String(r.loaiDongCo||'').trim() };
+        } else if(!map[key].loaiDong && r.loaiDongCo){
+          map[key].loaiDong = String(r.loaiDongCo||'').trim();
+        }
+      });
+    }
+
+    // 3) Trả về mảng theo alphabet mã máy
+    const arr = Object.keys(map).map(function(k){return map[k];});
+    arr.sort(function(a,b){return norm(a.maMay).localeCompare(norm(b.maMay));});
+    return arr;
   }
 
   window.renderMaVatTuPage = async function(){
@@ -22764,10 +22795,10 @@ console.log('[V750-fix] ✅ Approver sync fix loaded');
             <div style="flex:1;min-width:280px;max-width:520px">
               <div class="il">🔍 Chọn Mã máy</div>
               <div style="position:relative">
-                <input class="inp" id="mavt_mmSearch" placeholder="Gõ mã máy hoặc tên trại..." autocomplete="off"
+                <input class="inp" id="mavt_mmSearch" placeholder="Gõ mã máy, loại động cơ hoặc tên trại để lọc..." autocomplete="off"
                   oninput="mavtOnMMInput(this)" onfocus="mavtShowMMSug(this.value)"
-                  onblur="setTimeout(()=>mavtHideMMSug(),200)">
-                <div id="mavt_mm_sug" style="display:none;position:absolute;top:100%;left:0;min-width:360px;width:max-content;max-width:640px;background:#fff;border:1.5px solid var(--g);border-top:none;border-radius:0 0 10px 10px;max-height:420px;overflow-y:auto;z-index:400;box-shadow:0 8px 28px rgba(0,0,0,.22)"></div>
+                  onblur="setTimeout(()=>mavtHideMMSug(),220)">
+                <div id="mavt_mm_sug" style="display:none;position:absolute;top:100%;left:0;min-width:100%;width:max-content;max-width:min(760px,95vw);background:#fff;border:1.5px solid var(--g);border-top:none;border-radius:0 0 10px 10px;max-height:min(60vh,520px);overflow-y:auto;z-index:400;box-shadow:0 8px 28px rgba(0,0,0,.22)"></div>
               </div>
             </div>
             <button class="btn bg-b sm" onclick="mavtReload()">🔄 Tải lại</button>
@@ -22787,18 +22818,44 @@ console.log('[V750-fix] ✅ Approver sync fix loaded');
     const box=document.getElementById('mavt_mm_sug'); if(!box) return;
     const nq=norm(val);
     let list=machineList();
-    if(nq) list=list.filter(m=>norm(m.maMay+' '+m.tenTrai).includes(nq));
-    list=list.slice(0,50);
-    if(!list.length){ box.innerHTML='<div style="padding:10px 14px;color:var(--mu);font-size:12px">Không có máy phù hợp</div>'; box.style.display='block'; return; }
-    box.innerHTML=list.map(m=>{
+    const total = list.length;
+    if(nq){
+      // Ưu tiên khớp đầu chuỗi (mã máy), rồi tới chứa
+      const q = nq;
+      list = list.filter(function(m){ return norm(m.maMay+' '+(m.loaiDong||'')+' '+(m.tenTrai||'')).includes(q); });
+      list.sort(function(a,b){
+        const na=norm(a.maMay), nb=norm(b.maMay);
+        const sa = na.startsWith(q) ? 0 : (na.includes(q) ? 1 : 2);
+        const sb = nb.startsWith(q) ? 0 : (nb.includes(q) ? 1 : 2);
+        if(sa !== sb) return sa - sb;
+        return na.localeCompare(nb);
+      });
+    } else {
+      list.sort(function(a,b){ return norm(a.maMay).localeCompare(norm(b.maMay)); });
+    }
+    const shown = list.slice(0, 200);
+    if(!shown.length){
+      box.innerHTML='<div style="padding:12px 14px;color:var(--mu);font-size:12.5px">Không có máy phù hợp'
+        + (total? ' (tổng '+total+' mã máy trong Sheet 12)':'')+'</div>';
+      box.style.display='block'; return;
+    }
+    const headerHtml = '<div style="padding:6px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11px;color:var(--mu);font-weight:600;position:sticky;top:0;z-index:2">'
+      + 'Hiển thị <b>'+shown.length+'</b>' + (list.length>shown.length? ' / '+list.length : '')
+      + ' · Nguồn: Sheet 2 "Danh sách máy" (<b>'+total+'</b> mã máy) · Nhấn để chọn</div>';
+    box.innerHTML = headerHtml + shown.map(function(m){
       const rec = VT12_BY_MACHINE[norm(m.maMay)];
       const cnt = rec && rec.parts ? rec.parts.length : 0;
-      const tag = cnt>0 ? `<span style="color:#0d6e3f;font-weight:700">✓ ${cnt}</span>` : `<span style="color:#94a3b8">—</span>`;
-      return `<div style="padding:10px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;align-items:center;gap:10px" onmousedown="mavtPickMM('${jse(m.maMay)}')">
-        <b style="min-width:120px">${esc(m.maMay)}</b>
-        <span style="color:var(--mu);flex:1">${esc(m.tenTrai||'')}</span>
-        ${tag}
-      </div>`;
+      const tag = cnt>0
+        ? '<span style="color:#0d6e3f;font-weight:700;font-size:11px;background:#dcfce7;padding:2px 8px;border-radius:10px">✓ '+cnt+' VT</span>'
+        : '<span style="color:#94a3b8;font-size:11px">chưa khai</span>';
+      return '<div style="padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;align-items:center;gap:10px" '
+        + 'onmouseover="this.style.background=\'#f0fdf4\'" onmouseout="this.style.background=\'\'" '
+        + 'onmousedown="mavtPickMM(\''+jse(m.maMay)+'\')">'
+        + '<b style="min-width:130px">'+esc(m.maMay)+'</b>'
+        + '<span style="color:#7c3aed;flex:1;font-size:12px">'+esc(m.loaiDong||'')+'</span>'
+        + (m.tenTrai?'<span style="color:var(--mu);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.tenTrai)+'</span>':'')
+        + tag
+        + '</div>';
     }).join('');
     box.style.display='block';
   };
@@ -22814,17 +22871,22 @@ console.log('[V750-fix] ✅ Approver sync fix loaded');
     // Info line
     const info=document.getElementById('mavt_info');
     if(info){
-      const machs=machineList();
-      const covered=VT12_CACHE.rows.filter(r=>r.parts && r.parts.length).length;
-      info.innerHTML = `📊 Đã khai báo dữ liệu: <b>${covered}</b> / ${machs.length} máy · Sheet 12 có <b>${VT12_CACHE.rows.length}</b> dòng máy · <b>${VT12_CACHE.items.length}</b> hạng mục vật tư`;
+      const machs = machineList();
+      const totalS2 = machs.length;
+      const totalS12 = VT12_CACHE.rows.length;
+      const covered = VT12_CACHE.rows.filter(function(r){return r.parts && r.parts.length;}).length;
+      info.innerHTML = '📊 Sheet 2 (gốc) có <b>'+totalS2+'</b> mã máy · '
+        + 'Sheet 12 lưu <b>'+totalS12+'</b> dòng · '
+        + 'Đã khai báo vật tư: <b>'+covered+'</b> / '+totalS2+' máy · '
+        + '<b>'+VT12_CACHE.items.length+'</b> hạng mục vật tư (cột D→AF)';
     }
 
     if(!mm){
-      // Overview: 1 hàng / máy — dữ liệu ĐÃ được filter sẵn ở backend (bỏ 2 hàng header)
-      const rows = VT12_CACHE.rows;
-      if(!rows.length){ body.innerHTML='<i style="color:var(--mu)">Sheet 12 chưa có dữ liệu máy nào.</i>'; return; }
+      // Overview: 1 hàng / máy — GỐC là Sheet 2 (machineList), merge dữ liệu Sheet 12 để đếm VT + audit
+      const machs = machineList();
+      if(!machs.length){ body.innerHTML='<i style="color:var(--mu)">Chưa có mã máy nào trong Sheet 2 "Danh sách máy".</i>'; return; }
       body.innerHTML = `
-        <div style="font-size:12px;margin-bottom:10px;color:var(--mu)">💡 Chọn 1 mã máy phía trên để xem chi tiết + chỉnh sửa</div>
+        <div style="font-size:12px;margin-bottom:10px;color:var(--mu)">💡 Chọn 1 mã máy phía trên để xem chi tiết + chỉnh sửa · Máy chưa có trong Sheet 12 sẽ tự tạo khi nhấn "Sửa/bổ sung" → Lưu</div>
         <div style="overflow-x:auto">
         <table style="width:100%;min-width:820px;border-collapse:collapse;font-size:12px">
           <thead>
@@ -22838,16 +22900,23 @@ console.log('[V750-fix] ✅ Approver sync fix loaded');
             </tr>
           </thead>
           <tbody>
-            ${rows.map(r=>{
-              const cnt = r.parts ? r.parts.length : 0;
+            ${machs.map(function(m){
+              const rec = VT12_BY_MACHINE[norm(m.maMay)];
+              const cnt = rec && rec.parts ? rec.parts.length : 0;
+              const loaiDC = m.loaiDong || (rec && rec.loaiDongCo) || '';
+              const nguoi = rec ? (rec.nguoiCapNhat||'') : '';
+              const tg    = rec ? (rec.thoiGianCapNhat||'') : '';
+              const badge = cnt>0
+                ? `<b style="color:#0d6e3f">${cnt}</b>`
+                : `<span style="color:#94a3b8">0</span>`;
               return `<tr style="border-bottom:1px solid #f1f5f9">
-                <td style="padding:8px 12px"><b>${esc(r.maMay)}</b></td>
-                <td style="padding:8px 12px;color:#7c3aed">${esc(r.loaiDongCo||'')}</td>
-                <td style="padding:8px 12px;text-align:right"><b>${cnt}</b></td>
-                <td style="padding:8px 12px;color:#0d6e3f">${esc(r.nguoiCapNhat||'')}</td>
-                <td style="padding:8px 12px;color:var(--mu);font-size:11px">${esc(r.thoiGianCapNhat||'')}</td>
+                <td style="padding:8px 12px"><b>${esc(m.maMay)}</b></td>
+                <td style="padding:8px 12px;color:#7c3aed">${esc(loaiDC)}</td>
+                <td style="padding:8px 12px;text-align:right">${badge}</td>
+                <td style="padding:8px 12px;color:#0d6e3f">${esc(nguoi)}</td>
+                <td style="padding:8px 12px;color:var(--mu);font-size:11px">${esc(tg)}</td>
                 <td style="padding:8px 12px;text-align:center">
-                  <button class="btn bg-a sm" onclick="mavtPickMM('${jse(r.maMay)}')">👁 Xem</button>
+                  <button class="btn bg-a sm" onclick="mavtPickMM('${jse(m.maMay)}')">👁 Xem</button>
                 </td>
               </tr>`;
             }).join('')}
