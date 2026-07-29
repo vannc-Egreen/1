@@ -23109,6 +23109,570 @@ console.log('[V750-fix] ✅ Approver sync fix loaded');
 })();
 </script>
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     V752 — Patch pack (theo yêu cầu user)
+       1. Fix dropdown gợi ý mã máy bị ẩn (position:fixed thay vì absolute)
+       2. Thêm chức năng "➕ Thêm mã máy" trong tab Mã vật tư
+       3. Thêm chức năng "➕ Thêm hạng mục vật tư" (chèn cột)
+       4. Loại "Bộ lọc khí/Đường khí" khỏi Phân tích & Vòng đời VT
+       5. Click 1 dòng trong bảng "Định mức chi tiết toàn bộ VT" → mở modal
+          chi tiết từng lần thay (có sẵn xuất PDF / Excel)
+     ═══════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  'use strict';
+
+  /* ─────────── Utilities ─────────── */
+  function nq(s){
+    return String(s||'').trim().toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d')
+      .replace(/\s+/g,' ');
+  }
+  function esc(s){
+    return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function jse(s){
+    return String(s==null?'':s).replace(/'/g,"\\'").replace(/"/g,'\\"');
+  }
+  function toastMsg(m, t){ if(typeof toast==='function') toast(m, t||'ok'); }
+
+  // pvApi wrapper (fallback if not loaded yet)
+  async function api(action, data){
+    if(typeof pvApi === 'function') return pvApi(action, data||{});
+    throw new Error('API chưa sẵn sàng');
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     FIX #1 — Dropdown gợi ý mã máy dùng position:fixed để không bị cắt
+     bởi overflow:hidden của card cha.
+     ═══════════════════════════════════════════════════════════════════ */
+  const _prev_mavtShowMMSug = window.mavtShowMMSug;
+  const _prev_mavtHideMMSug = window.mavtHideMMSug;
+
+  function positionSugBox(){
+    const inp = document.getElementById('mavt_mmSearch');
+    const box = document.getElementById('mavt_mm_sug');
+    if(!inp || !box) return;
+    const rect = inp.getBoundingClientRect();
+    // Ước lượng chiều cao ~5 mã máy (mỗi dòng ~44px) + header ~32px = ~252px
+    // Nhưng để linh hoạt, dùng max-height 320px (>5 dòng vẫn cuộn tốt)
+    // Đảm bảo dropdown không tràn qua bottom viewport
+    const viewportH  = window.innerHeight || document.documentElement.clientHeight;
+    const spaceBelow = viewportH - rect.bottom - 12;   // khoảng trống bên dưới input
+    const maxH       = Math.max(180, Math.min(340, spaceBelow)); // ưu tiên đủ 5 dòng
+    const boxWidth   = Math.max(rect.width, 340);
+
+    // Reset các inline style cũ có thể gây méo layout khi chuyển sang fixed
+    box.style.position   = 'fixed';
+    box.style.top        = (rect.bottom + 2) + 'px';
+    box.style.left       = rect.left + 'px';
+    box.style.right      = 'auto';
+    box.style.bottom     = 'auto';
+    box.style.width      = boxWidth + 'px';
+    box.style.minWidth   = '0';                    // ⬅ hủy min-width:100% cũ
+    box.style.maxWidth   = 'min(760px, 95vw)';
+    box.style.height     = 'auto';
+    box.style.maxHeight  = maxH + 'px';
+    box.style.overflowY  = 'auto';
+    box.style.zIndex     = '9998';
+    box.style.background = '#fff';
+    box.style.border       = '1.5px solid var(--g, #0d6e3f)';
+    box.style.borderRadius = '10px';
+    box.style.boxShadow  = '0 10px 32px rgba(0,0,0,.28)';
+  }
+
+  // Ghi đè show/hide để giữ nguyên logic populate nhưng reposition + fixed.
+  window.mavtShowMMSug = function(val){
+    if(typeof _prev_mavtShowMMSug === 'function'){
+      _prev_mavtShowMMSug(val);
+    }
+    // Reposition ngay sau khi render nội dung xong
+    positionSugBox();
+  };
+  window.mavtHideMMSug = function(){
+    if(typeof _prev_mavtHideMMSug === 'function'){
+      _prev_mavtHideMMSug();
+    } else {
+      const b = document.getElementById('mavt_mm_sug'); if(b) b.style.display='none';
+    }
+  };
+
+  // Reposition khi scroll/resize (dropdown fixed cần theo dõi input)
+  ['scroll','resize'].forEach(function(evt){
+    window.addEventListener(evt, function(){
+      const box = document.getElementById('mavt_mm_sug');
+      if(box && box.style.display !== 'none') positionSugBox();
+    }, true);
+  });
+
+  /* ═══════════════════════════════════════════════════════════════════
+     FIX #2 & #3 — Nút "➕ Thêm mã máy" và "➕ Thêm hạng mục vật tư"
+     ═══════════════════════════════════════════════════════════════════ */
+
+  // Ghi đè renderMaVatTuPage: thêm 2 nút hành động vào toolbar
+  const _prev_renderMaVatTuPage = window.renderMaVatTuPage;
+  window.renderMaVatTuPage = async function(){
+    // Gọi bản gốc trước
+    if(typeof _prev_renderMaVatTuPage === 'function'){
+      await _prev_renderMaVatTuPage();
+    }
+    // Sau khi DOM render xong: chèn 2 nút "Thêm ..." vào cạnh nút "Tải lại"
+    // Tìm nút Tải lại và chèn 2 nút mới NGAY TRƯỚC nó
+    setTimeout(function(){
+      const reloadBtn = document.querySelector('#mavtRoot button[onclick="mavtReload()"]');
+      if(reloadBtn && !document.getElementById('mavt_btn_addMachine')){
+        const btnMach = document.createElement('button');
+        btnMach.id = 'mavt_btn_addMachine';
+        btnMach.className = 'btn bg-g sm';
+        btnMach.innerHTML = '➕ Thêm mã máy';
+        btnMach.onclick = function(){ mavtOpenAddMachineDialog(); };
+        reloadBtn.parentNode.insertBefore(btnMach, reloadBtn);
+
+        const btnItem = document.createElement('button');
+        btnItem.id = 'mavt_btn_addItem';
+        btnItem.className = 'btn bg-b sm';
+        btnItem.style.background = '#7c3aed';
+        btnItem.style.color = '#fff';
+        btnItem.innerHTML = '➕ Thêm hạng mục vật tư';
+        btnItem.onclick = function(){ mavtOpenAddItemDialog(); };
+        reloadBtn.parentNode.insertBefore(btnItem, reloadBtn);
+      }
+    }, 60);
+  };
+
+  /* ─────────── Dialog: Thêm mã máy mới ─────────── */
+  window.mavtOpenAddMachineDialog = function(){
+    document.getElementById('mavt_add_machine_modal')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'mavt_add_machine_modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:94vh;overflow:auto">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #e2e8f0;background:#f0fdf4">
+          <div>
+            <h3 style="margin:0;font-size:16px">➕ Thêm mã máy mới</h3>
+            <div style="font-size:12px;color:#64748b;margin-top:2px">Google Sheet sẽ tự thêm 1 dòng mới ở cuối bảng Sheet 12. Chủng loại &amp; Định mức sẽ do KTV nhập sau.</div>
+          </div>
+          <button class="btn bg-gr sm" onclick="document.getElementById('mavt_add_machine_modal').remove()">✕</button>
+        </div>
+        <div style="padding:18px 22px">
+          <div class="iw" style="margin-bottom:12px">
+            <div class="il">Mã máy mới <span style="color:#dc2626">*</span></div>
+            <input class="inp" id="mavt_new_mm" placeholder="VD: NS200KVA30" style="text-transform:uppercase" autocomplete="off">
+            <div style="font-size:11px;color:#64748b;margin-top:4px">Không được trùng với mã máy đã có. Tên vật tư (hạng mục) và đơn vị sẽ dùng chung cấu trúc cột với các máy trước đó.</div>
+          </div>
+          <div class="iw" style="margin-bottom:12px">
+            <div class="il">Loại động cơ (có thể để trống)</div>
+            <input class="inp" id="mavt_new_loaiDC" placeholder="VD: PE6T, PERKINS 1103, HINO EK130..." autocomplete="off">
+          </div>
+          <div class="iw" style="margin-bottom:12px">
+            <div class="il">Ghi chú ban đầu (nếu có)</div>
+            <textarea class="ta" id="mavt_new_ghiChu" rows="2" placeholder="Ghi chú thêm về máy..."></textarea>
+          </div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;background:#f8fafc">
+          <button class="btn bg-gr" onclick="document.getElementById('mavt_add_machine_modal').remove()">Đóng</button>
+          <button class="btn bg-g" id="mavt_new_mm_save" onclick="mavtSaveNewMachine()">💾 Thêm vào Sheet 12</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    setTimeout(function(){
+      const el = document.getElementById('mavt_new_mm');
+      if(el) el.focus();
+    }, 30);
+  };
+
+  window.mavtSaveNewMachine = async function(){
+    const mm       = ((document.getElementById('mavt_new_mm')     ||{}).value||'').trim().toUpperCase();
+    const loaiDC   = ((document.getElementById('mavt_new_loaiDC') ||{}).value||'').trim();
+    const ghiChu   = ((document.getElementById('mavt_new_ghiChu') ||{}).value||'').trim();
+    if(!mm){ toastMsg('❌ Vui lòng nhập Mã máy', 'err'); return; }
+
+    // Kiểm tra client-side trước cho phản hồi tức thì
+    if(window.VT12_BY_MACHINE && VT12_BY_MACHINE[nq(mm)]){
+      toastMsg('❌ Mã máy "'+mm+'" đã tồn tại', 'err');
+      return;
+    }
+
+    const btn = document.getElementById('mavt_new_mm_save');
+    if(btn){ btn.disabled = true; btn.innerHTML = '⏳ Đang lưu...'; }
+
+    try{
+      const r = await api('addMachineVT12', {
+        payload: { maMay: mm, loaiDongCo: loaiDC, ghiChu: ghiChu },
+        currentUser: window.CU || null
+      });
+      if(!r || r.success === false){
+        throw new Error((r && r.error) || 'Không lưu được');
+      }
+      toastMsg('✅ Đã thêm mã máy "'+mm+'" vào Sheet 12', 'ok');
+      document.getElementById('mavt_add_machine_modal')?.remove();
+      // Reload cache và render lại + auto-select máy mới
+      if(window.VT12_CACHE) VT12_CACHE.loaded = false;
+      // Tải lại cache
+      const rf = await api('getVatTuMay12', {});
+      if(window.VT12_CACHE){
+        VT12_CACHE.items = (rf && rf.items) || [];
+        VT12_CACHE.rows  = (rf && rf.rows)  || [];
+        VT12_CACHE.loaded = true;
+        const idx = {};
+        VT12_CACHE.rows.forEach(function(row){
+          if(row.maMay) idx[nq(row.maMay)] = row;
+          row.parts = [];
+          (row.values||[]).forEach(function(v, i){
+            const it = VT12_CACHE.items[i];
+            if(!it) return;
+            if(String(v.chungLoai||'').trim() || String(v.dinhMuc||'').trim()){
+              row.parts.push({ name: it.name, chungLoai: v.chungLoai, dinhMuc: v.dinhMuc, unit: it.unit });
+            }
+          });
+        });
+        window.VT12_BY_MACHINE = idx;
+      }
+      // Auto-select máy mới để KTV nhập tiếp
+      if(typeof mavtPickMM === 'function') mavtPickMM(mm);
+      else if(typeof mavtRender === 'function') mavtRender();
+    }catch(e){
+      toastMsg('❌ '+e.message, 'err');
+      if(btn){ btn.disabled = false; btn.innerHTML = '💾 Thêm vào Sheet 12'; }
+    }
+  };
+
+  /* ─────────── Dialog: Thêm hạng mục vật tư mới ─────────── */
+  window.mavtOpenAddItemDialog = function(){
+    document.getElementById('mavt_add_item_modal')?.remove();
+    // Số hạng mục hiện tại
+    const currentCount = (window.VT12_CACHE && VT12_CACHE.items) ? VT12_CACHE.items.length : 0;
+    const modal = document.createElement('div');
+    modal.id = 'mavt_add_item_modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:14px;max-width:600px;width:100%;max-height:94vh;overflow:auto">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #e2e8f0;background:#faf5ff">
+          <div>
+            <h3 style="margin:0;font-size:16px;color:#6b21a8">➕ Thêm hạng mục vật tư mới</h3>
+            <div style="font-size:12px;color:#64748b;margin-top:2px">Chèn thêm cột vào bên phải cột <b>Ghi chú</b> (cột AG). Hạng mục sẽ áp dụng cho <b>toàn bộ ${currentCount} hạng mục hiện tại</b> + toàn bộ mã máy.</div>
+          </div>
+          <button class="btn bg-gr sm" onclick="document.getElementById('mavt_add_item_modal').remove()">✕</button>
+        </div>
+        <div style="padding:18px 22px">
+          <div class="iw" style="margin-bottom:12px">
+            <div class="il">Tên vật tư (hạng mục) mới <span style="color:#dc2626">*</span></div>
+            <input class="inp" id="mavt_new_itemName" placeholder="VD: Lọc gió số 2, Cảm biến áp suất..." autocomplete="off">
+          </div>
+
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:12px">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600;color:#334155">
+              <input type="checkbox" id="mavt_new_hasDM" style="width:16px;height:16px;cursor:pointer" checked onchange="mavtToggleDMUnit()">
+              <span>Vật tư này <b>có định mức</b> (số lượng dự trù mỗi lần thay)</span>
+            </label>
+            <div id="mavt_new_dm_unitBox" style="margin-top:10px;padding-left:26px">
+              <div class="il" style="font-size:11px">Đơn vị định mức</div>
+              <input class="inp" id="mavt_new_dmUnit" placeholder="VD: cái, lít, bộ, hộp..." value="cái" style="max-width:200px">
+              <div style="font-size:11px;color:#64748b;margin-top:6px">→ Sẽ chèn <b>2 cột</b>: "Tên vật tư" và "Định mức (đơn vị)"</div>
+            </div>
+            <div id="mavt_new_noDMHint" style="display:none;margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#78350f">
+              → Sẽ chèn <b>1 cột</b>: chỉ có "Tên vật tư", không có cột Định mức
+            </div>
+          </div>
+
+          <div style="padding:10px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:12px;color:#1e40af">
+            <b>Nguyên tắc chèn cột:</b> Cột mới được chèn ngay bên phải cột "Ghi chú" (AG).
+            Các hạng mục thêm tiếp theo tự động nối tiếp về bên phải, giữ cột "Ghi chú" ở vị trí AG
+            và các cột audit (Người/Thời gian cập nhật) luôn ở cuối cùng.
+          </div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;background:#f8fafc">
+          <button class="btn bg-gr" onclick="document.getElementById('mavt_add_item_modal').remove()">Đóng</button>
+          <button class="btn" style="background:#7c3aed;color:#fff" id="mavt_new_item_save" onclick="mavtSaveNewItem()">💾 Chèn cột vào Sheet 12</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    setTimeout(function(){
+      const el = document.getElementById('mavt_new_itemName');
+      if(el) el.focus();
+    }, 30);
+  };
+
+  window.mavtToggleDMUnit = function(){
+    const cb = document.getElementById('mavt_new_hasDM');
+    const box = document.getElementById('mavt_new_dm_unitBox');
+    const hint = document.getElementById('mavt_new_noDMHint');
+    if(!cb) return;
+    if(cb.checked){
+      if(box) box.style.display = '';
+      if(hint) hint.style.display = 'none';
+    } else {
+      if(box) box.style.display = 'none';
+      if(hint) hint.style.display = '';
+    }
+  };
+
+  window.mavtSaveNewItem = async function(){
+    const name  = ((document.getElementById('mavt_new_itemName')||{}).value||'').trim();
+    const hasDM = !!(document.getElementById('mavt_new_hasDM')||{}).checked;
+    const unit  = ((document.getElementById('mavt_new_dmUnit')  ||{}).value||'').trim();
+    if(!name){ toastMsg('❌ Vui lòng nhập Tên vật tư', 'err'); return; }
+    if(hasDM && !unit){ toastMsg('❌ Vui lòng nhập Đơn vị định mức', 'err'); return; }
+
+    // Kiểm tra client-side trước
+    if(window.VT12_CACHE && VT12_CACHE.items){
+      const dup = VT12_CACHE.items.find(function(it){ return nq(it.name) === nq(name); });
+      if(dup){ toastMsg('❌ Hạng mục "'+name+'" đã có trong bảng', 'err'); return; }
+    }
+
+    const btn = document.getElementById('mavt_new_item_save');
+    if(btn){ btn.disabled = true; btn.innerHTML = '⏳ Đang chèn cột...'; }
+
+    try{
+      const r = await api('addItemVT12', {
+        payload: { name: name, hasDinhMuc: hasDM, unit: unit },
+        currentUser: window.CU || null
+      });
+      if(!r || r.success === false){
+        throw new Error((r && r.error) || 'Không chèn được cột');
+      }
+      toastMsg('✅ Đã chèn hạng mục "'+name+'" vào Sheet 12 ('+(r.colsInserted||1)+' cột)', 'ok');
+      document.getElementById('mavt_add_item_modal')?.remove();
+      // Reload cache
+      if(window.VT12_CACHE) VT12_CACHE.loaded = false;
+      const rf = await api('getVatTuMay12', {});
+      if(window.VT12_CACHE){
+        VT12_CACHE.items = (rf && rf.items) || [];
+        VT12_CACHE.rows  = (rf && rf.rows)  || [];
+        VT12_CACHE.loaded = true;
+        const idx = {};
+        VT12_CACHE.rows.forEach(function(row){
+          if(row.maMay) idx[nq(row.maMay)] = row;
+          row.parts = [];
+          (row.values||[]).forEach(function(v, i){
+            const it = VT12_CACHE.items[i];
+            if(!it) return;
+            if(String(v.chungLoai||'').trim() || String(v.dinhMuc||'').trim()){
+              row.parts.push({ name: it.name, chungLoai: v.chungLoai, dinhMuc: v.dinhMuc, unit: it.unit });
+            }
+          });
+        });
+        window.VT12_BY_MACHINE = idx;
+      }
+      if(typeof mavtRender === 'function') mavtRender();
+    }catch(e){
+      toastMsg('❌ '+e.message, 'err');
+      if(btn){ btn.disabled = false; btn.innerHTML = '💾 Chèn cột vào Sheet 12'; }
+    }
+  };
+
+  /* ═══════════════════════════════════════════════════════════════════
+     FIX #4 — Loại "Bộ lọc khí / Đường khí" khỏi Phân tích & Vòng đời VT
+     Cách làm: mở rộng hàm isConsumableV751 để trả về true cho cả các
+     hạng mục thuộc cụm linh kiện "Bộ lọc khí / Đường khí".
+     ═══════════════════════════════════════════════════════════════════ */
+  const AIR_FILTER_CLUSTER_PATTERNS = [
+    'bo loc khi',
+    'duong khi',
+    'bo loc khi/duong khi',
+    'bo loc khi / duong khi'
+  ];
+  function matchesAirFilterCluster(cum){
+    const nc = nq(cum);
+    if(!nc) return false;
+    return AIR_FILTER_CLUSTER_PATTERNS.some(function(p){ return nc.indexOf(p) >= 0; });
+  }
+
+  let _airFilterSet = null;
+  function buildAirFilterSet(){
+    const set = new Set();
+
+    // 1) Từ PV.data.vatTu (dữ liệu vật tư từ Google Sheet)
+    try{
+      if(window.PV && PV.data && Array.isArray(PV.data.vatTu)){
+        PV.data.vatTu.forEach(function(m){
+          const cum = m['Cụm Linh Kiện'] || m['Cụm linh kiện'] || m['Cum Linh Kien']
+                   || m.cumLinhKien || m.cum || '';
+          if(matchesAirFilterCluster(cum)){
+            const name = m['Tên vật tư'] || m['Tên VT'] || m['Ten vat tu']
+                      || m.tenVatTu || '';
+            if(name) set.add(nq(name));
+          }
+        });
+      }
+    }catch(_){}
+
+    // 2) Từ PARTS_MAP tĩnh
+    try{
+      if(window.PARTS_MAP){
+        Object.keys(window.PARTS_MAP).forEach(function(cum){
+          if(matchesAirFilterCluster(cum)){
+            (window.PARTS_MAP[cum] || []).forEach(function(p){
+              if(p) set.add(nq(p));
+            });
+          }
+        });
+      }
+    }catch(_){}
+
+    return set;
+  }
+  function rebuildAirFilterSet(){ _airFilterSet = buildAirFilterSet(); }
+
+  window.isAirFilterPartV752 = function(name){
+    if(!_airFilterSet) rebuildAirFilterSet();
+    return _airFilterSet.has(nq(name));
+  };
+
+  // Wrap isConsumableV751 (được dùng trong buildLifecycleData & renderAnalysis Top LK)
+  const _prevIsConsumable = window.isConsumableV751;
+  window.isConsumableV751 = function(name){
+    // Kiểm tra bản gốc trước (nhớt, bugi, lọc nhớt, lọc gió, hạt lọc)
+    if(typeof _prevIsConsumable === 'function' && _prevIsConsumable(name)) return true;
+    // Bộ lọc khí / Đường khí
+    if(isAirFilterPartV752(name)) return true;
+    return false;
+  };
+
+  // Khi PV.data.vatTu được nạp/thay đổi, rebuild set
+  // Cách đơn giản: rebuild định kỳ, và khi user bấm "Cập nhật BC"
+  setInterval(function(){
+    // Chỉ rebuild khi tab liên quan (analysis / lifecycle / mavt) đang mở
+    if(window.curPage==='analysis' || window.curPage==='lifecycle' || window.curPage==='mavt'){
+      const before = _airFilterSet ? _airFilterSet.size : 0;
+      rebuildAirFilterSet();
+      const after = _airFilterSet ? _airFilterSet.size : 0;
+      // Không log spam
+    }
+  }, 5000);
+
+  /* ═══════════════════════════════════════════════════════════════════
+     FIX #5 — Click vào 1 dòng trong bảng "Định mức chi tiết toàn bộ vật tư"
+     → mở modal chi tiết (dùng lại lcShowBarDetail đã có sẵn xuất PDF/Excel)
+     Cách làm: event-delegation trên tbody id="lc-tbody" và một wrapper
+     override của renderLifecycleTable để đảm bảo mọi lần re-render đều có
+     visual hint (con trỏ chuột + hover) đúng.
+     ═══════════════════════════════════════════════════════════════════ */
+
+  // Bảo đảm tbody có style cursor:pointer trên các dòng sau mỗi lần render
+  // MutationObserver theo dõi tbody để tự set style
+  function enhanceLcTbody(){
+    const tbody = document.getElementById('lc-tbody');
+    if(!tbody) return;
+    Array.prototype.forEach.call(tbody.querySelectorAll('tr'), function(tr){
+      // Skip empty state row (colspan)
+      if(tr.querySelector('td[colspan]')) return;
+      if(tr.dataset._lcClickable === '1') return;
+      tr.dataset._lcClickable = '1';
+      tr.style.cursor = 'pointer';
+      // Nhấn hint hover
+      tr.title = 'Nhấn để xem chi tiết từng lần thay';
+      // Second column (index 1) chứa tên VT
+      const nameCell = tr.children[1];
+      if(nameCell){
+        // Thêm mũi tên nhỏ + underline khi hover, giữ nội dung
+        const orig = nameCell.innerHTML;
+        // Chỉ wrap nếu chưa wrap
+        if(!nameCell.dataset._lcWrapped){
+          nameCell.dataset._lcWrapped = '1';
+          nameCell.innerHTML = '<span style="text-decoration:underline;text-decoration-style:dotted;text-decoration-color:#0d6e3f">'
+            + orig + '</span> <span style="font-size:10px;color:#0d6e3f">›</span>';
+        }
+      }
+    });
+  }
+
+  // Event delegation cho click trên tbody
+  document.addEventListener('click', function(evt){
+    const tbody = document.getElementById('lc-tbody');
+    if(!tbody) return;
+    const tr = evt.target && evt.target.closest && evt.target.closest('tr');
+    if(!tr || !tbody.contains(tr)) return;
+    // Bỏ qua nếu là empty state
+    if(tr.querySelector('td[colspan]')) return;
+    // Bỏ qua nếu click vào button/link bên trong dòng
+    if(evt.target && (evt.target.tagName === 'BUTTON' || evt.target.tagName === 'A')) return;
+    // Lấy tên vật tư từ cột thứ 2 (index 1)
+    const nameCell = tr.children[1];
+    if(!nameCell) return;
+    // Lấy text gốc (không bao gồm mũi tên và underline span)
+    let name = nameCell.textContent.replace(/›/g,'').trim();
+    // Nếu có wrapping thì .textContent vẫn cho ra text nguyên bản
+    if(!name) return;
+
+    // Gọi helper để mở modal
+    openLifecycleDetailFor(name);
+  }, false);
+
+  // Helper: mở modal chi tiết cho 1 tên VT (giống như click bar chart)
+  function openLifecycleDetailFor(partName){
+    if(typeof buildLifecycleData !== 'function' || typeof lcShowBarDetail !== 'function' || typeof lcGetPartDetailRows !== 'function'){
+      toastMsg('Chức năng chi tiết chưa sẵn sàng', 'err');
+      return;
+    }
+    const data = buildLifecycleData();
+    // Tìm exact match trước, sau đó thử normalized
+    let d = data.find(function(x){ return x.name === partName; });
+    if(!d){
+      d = data.find(function(x){ return nq(x.name) === nq(partName); });
+    }
+    if(!d){
+      toastMsg('Không tìm thấy dữ liệu chi tiết cho "'+partName+'"', 'err');
+      return;
+    }
+    const detail = lcGetPartDetailRows(d.name);
+    const title = 'Chi tiết: ' + d.name + ' (' + d.totalCount + ' lần)';
+    // Thêm subtitle info
+    lcShowBarDetail(
+      title,
+      detail.rows,
+      ['Mã máy','Ngày BDSC','Giờ ĐH trước','Giờ ĐH lúc thay','Tuổi thọ'],
+      detail.repIds
+    );
+    // Nếu có sub-title trong modal, cập nhật để có thêm "X lần thay thế · Y báo cáo BDSC"
+    // (lcShowBarDetail đã tự làm điều này rồi)
+  }
+
+  // Sau mỗi lần renderLifecycle, kích hoạt enhance
+  const _prevRenderLifecycle = window.renderLifecycle;
+  if(typeof _prevRenderLifecycle === 'function'){
+    window.renderLifecycle = function(){
+      const ret = _prevRenderLifecycle.apply(this, arguments);
+      // enhance lần đầu
+      requestAnimationFrame(function(){ enhanceLcTbody(); });
+      // enhance lần thứ 2 sau delay ngắn (đề phòng render lại chart, table update async)
+      setTimeout(enhanceLcTbody, 200);
+      return ret;
+    };
+  }
+
+  // MutationObserver dự phòng — chạy 1 lần khi tbody xuất hiện lần đầu
+  const _lcObserver = new MutationObserver(function(muts){
+    for(let i=0;i<muts.length;i++){
+      const m = muts[i];
+      // Nếu tbody bị thay đổi children thì enhance
+      if(m.target && m.target.id === 'lc-tbody'){
+        enhanceLcTbody();
+        break;
+      }
+    }
+  });
+  function setupLcObserver(){
+    const tbody = document.getElementById('lc-tbody');
+    if(tbody){
+      try{ _lcObserver.observe(tbody, { childList: true, subtree: false }); }catch(_){}
+      enhanceLcTbody();
+      return true;
+    }
+    return false;
+  }
+  // Retry set up observer nếu chưa có DOM
+  let _lcObsTries = 0;
+  const _lcObsInt = setInterval(function(){
+    if(setupLcObserver() || ++_lcObsTries > 30){
+      clearInterval(_lcObsInt);
+    }
+  }, 500);
+
+  console.log('[V752] ✅ Patch loaded — dropdown fix + add-machine + add-item + air-filter exclusion + lifecycle-row-click');
+})();
+</script>
 
 </body>
 </html>
