@@ -10979,6 +10979,16 @@ nav=function(p){
           setImp(sidebar,'transform','none');
           var ov=document.getElementById('mobOverlay'); if(ov)ov.classList.remove('show');
         }else{
+          // V75 fix: xoa cac inline style desktop (position/width/flex/transform) de CSS mobile (.sidebar off-canvas) hoat dong lai, tranh sidebar chiem 206px lam noi dung bi day sang phai.
+          sidebar.style.removeProperty('position');
+          sidebar.style.removeProperty('left');
+          sidebar.style.removeProperty('bottom');
+          sidebar.style.removeProperty('width');
+          sidebar.style.removeProperty('min-width');
+          sidebar.style.removeProperty('max-width');
+          sidebar.style.removeProperty('flex');
+          sidebar.style.removeProperty('transform');
+          sidebar.style.removeProperty('overflow-y');
           setImp(sidebar,'top',h+'px');
           setImp(sidebar,'height','calc(100vh - '+h+'px)');
         }
@@ -10989,14 +10999,32 @@ nav=function(p){
         setImp(content,'left','auto');
         setImp(content,'right','auto');
         setImp(content,'bottom','auto');
-        setImp(content,'flex','1 1 auto');
-        setImp(content,'min-width','0');
-        setImp(content,'width',desk?'auto':'100%');
-        setImp(content,'max-width','none');
         setImp(content,'height','auto');
         setImp(content,'min-height','calc(100vh - '+h+'px)');
-        setImp(content,'margin','0');
-        setImp(content,'overflow','visible');
+        // V75 fix: mot so trang (Danh sach may, Hien tuong & LK...) la flex-sibling truc tiep cua .layout, khong nam trong .content.
+        // Neu khong xu ly, .content rong van chiem 1 nua be rong, ep trang dang hien thi bi thu hep con mot nua.
+        var outsidePage=document.querySelector('.layout > .page.on');
+        if(outsidePage){
+          setImp(content,'flex','0 0 0');
+          setImp(content,'width','0');
+          setImp(content,'min-width','0');
+          setImp(content,'max-width','0');
+          setImp(content,'margin','0');
+          setImp(content,'padding','0');
+          setImp(content,'overflow','hidden');
+          setImp(outsidePage,'flex','1 1 auto');
+          setImp(outsidePage,'min-width','0');
+          setImp(outsidePage,'width','100%');
+          setImp(outsidePage,'max-width',desk?'1800px':'none');
+          setImp(outsidePage,'margin',desk?'0 auto':'0');
+        }else{
+          setImp(content,'flex','1 1 auto');
+          setImp(content,'min-width','0');
+          setImp(content,'width',desk?'auto':'100%');
+          setImp(content,'max-width','none');
+          setImp(content,'margin','0');
+          setImp(content,'overflow','visible');
+        }
       }
       ['pg-taoPhieu','pg-danhSachPhieu','pg-hoanThanhPhieu'].forEach(function(id){
         var pg=document.getElementById(id); if(!pg)return;
@@ -11548,9 +11576,34 @@ nav=function(p){
       if(layout){setImp(layout,'display','flex');setImp(layout,'align-items','flex-start');setImp(layout,'width','100%');setImp(layout,'height','auto');setImp(layout,'min-height','calc(100vh - '+h+'px)');setImp(layout,'margin','0');setImp(layout,'padding','0');setImp(layout,'overflow','visible');}
       if(sidebar){
         if(desk){sidebar.classList.remove('open');setImp(sidebar,'position','sticky');setImp(sidebar,'top',h+'px');setImp(sidebar,'left','auto');setImp(sidebar,'bottom','auto');setImp(sidebar,'width',SIDEBAR_W+'px');setImp(sidebar,'min-width',SIDEBAR_W+'px');setImp(sidebar,'max-width',SIDEBAR_W+'px');setImp(sidebar,'flex','0 0 '+SIDEBAR_W+'px');setImp(sidebar,'height','calc(100vh - '+h+'px)');setImp(sidebar,'overflow-y','auto');setImp(sidebar,'overflow-x','hidden');setImp(sidebar,'transform','none');setImp(sidebar,'box-shadow','none');}
-        else{setImp(sidebar,'top',h+'px');setImp(sidebar,'height','calc(100vh - '+h+'px)');}
+        else{
+          sidebar.style.removeProperty('position');
+          sidebar.style.removeProperty('left');
+          sidebar.style.removeProperty('bottom');
+          sidebar.style.removeProperty('width');
+          sidebar.style.removeProperty('min-width');
+          sidebar.style.removeProperty('max-width');
+          sidebar.style.removeProperty('flex');
+          sidebar.style.removeProperty('transform');
+          sidebar.style.removeProperty('overflow-y');
+          sidebar.style.removeProperty('overflow-x');
+          sidebar.style.removeProperty('box-shadow');
+          setImp(sidebar,'top',h+'px');
+          setImp(sidebar,'height','calc(100vh - '+h+'px)');
+        }
       }
-      if(content){setImp(content,'position','relative');setImp(content,'flex','1 1 auto');setImp(content,'min-width','0');setImp(content,'width',desk?'auto':'100%');setImp(content,'max-width',desk?'none':'100%');setImp(content,'height','auto');setImp(content,'min-height','calc(100vh - '+h+'px)');setImp(content,'margin','0');setImp(content,'padding','0');setImp(content,'overflow','visible');}
+      if(content){
+        setImp(content,'position','relative');
+        setImp(content,'height','auto');
+        setImp(content,'min-height','calc(100vh - '+h+'px)');
+        var outsidePage2=document.querySelector('.layout > .page.on');
+        if(outsidePage2){
+          setImp(content,'flex','0 0 0');setImp(content,'width','0');setImp(content,'min-width','0');setImp(content,'max-width','0');setImp(content,'margin','0');setImp(content,'padding','0');setImp(content,'overflow','hidden');
+          setImp(outsidePage2,'flex','1 1 auto');setImp(outsidePage2,'min-width','0');setImp(outsidePage2,'width','100%');setImp(outsidePage2,'max-width',desk?'1800px':'none');setImp(outsidePage2,'margin',desk?'0 auto':'0');
+        }else{
+          setImp(content,'flex','1 1 auto');setImp(content,'min-width','0');setImp(content,'width',desk?'auto':'100%');setImp(content,'max-width',desk?'none':'100%');setImp(content,'margin','0');setImp(content,'padding','0');setImp(content,'overflow','visible');
+        }
+      }
       ['pg-taoPhieu','pg-danhSachPhieu','pg-hoanThanhPhieu'].forEach(function(id){var pg=document.getElementById(id);if(!pg)return;setImp(pg,'width','100%');setImp(pg,'max-width','none');setImp(pg,'margin','0');setImp(pg,'padding',desk?'16px 20px 110px 20px':'14px 10px 100px 10px');setImp(pg,'overflow','visible');setImp(pg,'transform','none');});
       var ov=document.getElementById('mobOverlay'); if(desk&&ov)ov.classList.remove('show');
     }catch(e){}
