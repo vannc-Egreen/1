@@ -9575,9 +9575,15 @@ function closeSidebar(){
   if(sb) sb.classList.remove('open');
   if(ov) ov.classList.remove('show');
 }
+// V74b: phát hiện mobile bền vững — một số trình duyệt trong-app trên điện thoại báo sai innerWidth (>768),
+// nên ưu tiên kiểm tra khả năng cảm ứng (hover:none/pointer:coarse) trước, innerWidth chỉ là dự phòng.
+window.__eGreenIsMobile=function(){
+  try{ if(window.matchMedia && window.matchMedia('(hover:none) and (pointer:coarse)').matches) return true; }catch(e){}
+  return window.innerWidth<=900;
+};
 // Ẩn/hiện nút hamburger và sidebar header dựa theo kích thước màn hình
 function updateMobileUI(){
-  const isMobile=window.innerWidth<=768;
+  const isMobile=window.__eGreenIsMobile();
   const btn=document.getElementById('mobMenuBtn');
   const hd=document.getElementById('sidebarMobileHeader');
   if(btn) btn.style.display=isMobile?'flex':'none';
@@ -10453,7 +10459,7 @@ nav=function(p){
     try{
       const content=document.querySelector('.content');
       const sidebar=document.getElementById('mainSidebar')||document.querySelector('.sidebar');
-      if(window.innerWidth>768){
+      if(!window.__eGreenIsMobile()){
         if(content){
           content.style.marginLeft='0';
           content.style.width='';
@@ -10613,7 +10619,7 @@ nav=function(p){
     try{
       var content=document.querySelector('.content');
       var sidebar=document.getElementById('mainSidebar')||document.querySelector('.sidebar');
-      if(window.innerWidth>768){
+      if(!window.__eGreenIsMobile()){
         if(content){
           content.style.setProperty('margin-left','206px','important');
           content.style.setProperty('width','calc(100% - 206px)','important');
@@ -10901,7 +10907,7 @@ nav=function(p){
 <script id="pv24-stable-layout-restore-js">
 (function(){
   var DESKTOP_TOP=54, MOBILE_TOP=50;
-  function isDesk(){return window.innerWidth>768;}
+  function isDesk(){return !window.__eGreenIsMobile();}
   function setImp(el,p,v){if(el)el.style.setProperty(p,v,'important');}
 
   function resetScroll(){
@@ -11485,7 +11491,7 @@ nav=function(p){
   window.__pv28FastMaterialLayoutFix=true;
 
   var DESKTOP_TOP=54, MOBILE_TOP=50, SIDEBAR_W=206;
-  function isDesk(){return window.innerWidth>768;}
+  function isDesk(){return !window.__eGreenIsMobile();}
   function setImp(el,p,v){if(el&&el.style)el.style.setProperty(p,v,'important');}
   function idle(fn,delay){
     delay=delay||0;
