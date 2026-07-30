@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=5.0,user-scalable=yes">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=10.0,user-scalable=yes">
 <title>eGreen BDSC + Phiếu vật tư</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script>
@@ -833,7 +833,53 @@ tbody tr{border-bottom:1px solid #f1f5f9;transition:.1s}tbody tr:hover{backgroun
   .pv17-list-table th, .pv17-list-table td{ padding:7px 8px; }
 }
 
+/* ── V73: đảm bảo mọi bảng dữ liệu hiển thị đầy đủ trên mọi thiết bị ──
+   Bảng cuộn ngang mượt trên iOS/Android, giữ nguyên toàn bộ cột, không cắt dữ liệu. */
+html{overscroll-behavior-x:none}
+body{overscroll-behavior-x:none}
+.v73-scrollx{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.v73-scrollx table{width:max-content;min-width:100%}
+[class*="wrap"],[class*="scroll"]{-webkit-overflow-scrolling:touch}
 </style>
+<script id="v73-table-safety-script">
+(function(){
+  // Bọc mọi <table> chưa nằm trong vùng cuộn ngang, để không bảng nào bị tràn/che khuất dữ liệu trên mobile.
+  function hasScrollAncestor(el){
+    var p = el.parentElement;
+    while(p && !p.classList.contains('page')){
+      var cs = getComputedStyle(p);
+      if(cs.overflowX === 'auto' || cs.overflowX === 'scroll') return true;
+      p = p.parentElement;
+    }
+    return false;
+  }
+  function wrapTables(root){
+    (root || document).querySelectorAll('table').forEach(function(t){
+      if(t.closest('.v73-scrollx')) return;
+      if(hasScrollAncestor(t)) return;
+      var w = document.createElement('div');
+      w.className = 'v73-scrollx';
+      t.parentNode.insertBefore(w, t);
+      w.appendChild(t);
+    });
+  }
+  function run(){ try{ wrapTables(document); }catch(e){} }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', run);
+  } else { run(); }
+  var mo = new MutationObserver(function(muts){
+    var needsRun = false;
+    for (var i=0;i<muts.length;i++){
+      if (muts[i].addedNodes && muts[i].addedNodes.length){ needsRun = true; break; }
+    }
+    if (needsRun) run();
+  });
+  document.addEventListener('DOMContentLoaded', function(){
+    var appEl = document.getElementById('app');
+    if (appEl) mo.observe(appEl, {childList:true, subtree:true});
+  });
+})();
+</script>
 </head>
 <body>
 <!-- AUTH -->
@@ -959,13 +1005,13 @@ tbody tr{border-bottom:1px solid #f1f5f9;transition:.1s}tbody tr:hover{backgroun
       <button onclick="closeSidebar()" style="width:28px;height:28px;border-radius:50%;border:none;background:#f1f5f9;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--mu)">✕</button>
     </div>
     <div class="nsec">Báo cáo</div>
-    <div class="nitem on" onclick="nav('dash')">
+    <div class="nitem on" onclick="nav('dash')" id="ni-dash">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Tổng quan
     </div>
-    <div class="nitem" onclick="nav('newrep')">
+    <div class="nitem" onclick="nav('newrep')" id="ni-newrep">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Nhập báo cáo mới
     </div>
-    <div class="nitem" onclick="nav('replist')">
+    <div class="nitem" onclick="nav('replist')" id="ni-replist">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12h6M9 16h6M17 21H7a2 2 0 01-2-2V5a2 2 0 012-2h7l5 5v11a2 2 0 01-2 2z"/></svg>Nhật ký BDSC<span class="nbadge" id="nb-rep">0</span>
     </div>
 
@@ -981,20 +1027,20 @@ tbody tr{border-bottom:1px solid #f1f5f9;transition:.1s}tbody tr:hover{backgroun
     <div class="nitem" onclick="nav('phieuvattu')" id="ni-phieuvattu" style="display:none">
       <span class="ico">📦</span><span>Phiếu vật tư (legacy)</span>
     </div>
-    <div class="nitem" onclick="nav('watch')">
+    <div class="nitem" onclick="nav('watch')" id="ni-watch">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Theo dõi vấn đề<span class="nbadge am" id="nb-watch">0</span>
     </div>
-    <div class="nitem" onclick="nav('analysis')">
+    <div class="nitem" onclick="nav('analysis')" id="ni-analysis">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>Phân tích
     </div>
     <div class="nitem" onclick="nav('lifecycle')" id="ni-lifecycle">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 6 12 12 16 14"/></svg>Vòng đời vật tư<span class="nbadge rd" id="nb-lifecycle" style="display:none">0</span>
     </div>
     <div class="nsec">Danh mục</div>
-    <div class="nitem" onclick="nav('machines')">
+    <div class="nitem" onclick="nav('machines')" id="ni-machines">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3h-8M12 3v4"/></svg>Danh sách máy<span class="nbadge" id="nb-mach">0</span>
     </div>
-    <div class="nitem" onclick="nav('phenom')">
+    <div class="nitem" onclick="nav('phenom')" id="ni-phenom">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>Hiện tượng & LK
     </div>
     <div class="nitem" onclick="nav('mavt')" id="ni-mavt">
@@ -2478,10 +2524,7 @@ function nav(p){
   document.querySelectorAll('.nitem').forEach(x=>x.classList.remove('on'));
   const pg=document.getElementById('pg-'+p);if(pg)pg.classList.add('on');
   curPage=p;
-  const map={dash:0,newrep:1,replist:2,watch:3,analysis:4,machines:5,phenom:6,members:7,users:8,perms:9,settings:10};
-  const ni=document.querySelectorAll('.nitem');
-  if(map[p]!==undefined&&ni[map[p]])ni[map[p]].classList.add('on');
-  // ID-based highlight for newer pages
+  // V74 fix: bôi đậm menu theo id, không dùng chỉ số vị trí (đã lệch do thêm mục mới)
   const niById = document.getElementById('ni-'+p);
   if(niById) niById.classList.add('on');
   if(p==='dash')    { renderDash(); updateBadges(); }
