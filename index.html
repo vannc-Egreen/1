@@ -36100,5 +36100,91 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
 })();
 </script>
 
+<style id="v773-style">
+.v53-table tr.v773-gh th{background:#ecfdf5;color:#065f46;text-align:left;font-size:12.5px;font-weight:800;padding:7px 10px;border:1px solid #a7f3d0;cursor:pointer;position:sticky;top:0;z-index:1}
+.v53-table tr.v773-gh th .v773-n{font-weight:500;color:#64748b;margin-left:6px}
+.v53-table tr.v773-gh th .v773-t{display:inline-block;width:14px;color:#047857}
+.v53-table tr.v773-off{display:none}
+.v773-tools{display:flex;gap:6px;align-items:center;margin:0 0 8px;font-size:12px;color:#475569;flex-wrap:wrap}
+</style>
+<script id="v773-group">
+/* ===== V773 · FORM SỬA / DUYỆT PHIẾU ĐỀ XUẤT VẬT TƯ: chia theo CỤM giống lúc tạo phiếu (người duyệt dễ kiểm soát) =====
+   Chỉ chèn dòng tiêu đề « 📦 Cụm (n vật tư) » vào bảng; dòng vật tư, ô nhập, nút Xóa / Thêm dòng, lưu / duyệt giữ nguyên. Bấm tiêu đề để thu gọn / mở cụm. */
+(function () {
+"use strict";
+if (window.__v773) return; window.__v773 = true;
+var W = window, D = document;
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function cumOf(tr) { var i = tr.querySelector('[data-k="cumLinhKien"]'); return i ? String(i.value || '').trim() : ''; }
+function dataRows(tb) { return Array.prototype.slice.call(tb.querySelectorAll('tr')).filter(function (r) { return !r.classList.contains('v773-gh'); }); }
+
+function regroup(tb) {
+  if (!tb) return;
+  var collapsed = {}; Array.prototype.forEach.call(tb.querySelectorAll('tr.v773-gh'), function (h) { if (h.dataset.off === '1') collapsed[h.dataset.c] = 1; });
+  var rows = dataRows(tb), order = [], by = {};
+  rows.forEach(function (r) { var c = cumOf(r); if (!by[c]) { by[c] = []; order.push(c); } by[c].push(r); });
+  order = order.filter(function (c) { return c; }).concat(order.indexOf('') >= 0 ? [''] : []);          /* dòng phát sinh / chưa có cụm xuống cuối */
+  Array.prototype.forEach.call(tb.querySelectorAll('tr.v773-gh'), function (h) { h.remove(); });
+  var frag = D.createDocumentFragment(), n = 0;
+  order.forEach(function (c) {
+    var h = D.createElement('tr'); h.className = 'v773-gh'; h.dataset.c = c; h.dataset.off = collapsed[c] ? '1' : '0';
+    h.innerHTML = '<th colspan="7"><span class="v773-t">' + (collapsed[c] ? '▸' : '▾') + '</span>📦 ' + esc(c || 'Vật tư phát sinh / chưa có cụm') + '<span class="v773-n">(' + by[c].length + ' vật tư)</span></th>';
+    frag.appendChild(h);
+    by[c].forEach(function (r) { n++; var td = r.querySelector('td'); if (td) td.textContent = n; r.classList.toggle('v773-off', !!collapsed[c]); frag.appendChild(r); });
+  });
+  tb.appendChild(frag);
+}
+function boot(tb) { if (tb.__v773) return; tb.__v773 = true; regroup(tb); }
+
+/* bấm tiêu đề cụm → thu gọn / mở */
+D.addEventListener('click', function (e) {
+  var h = e.target.closest && e.target.closest('tr.v773-gh'); if (!h) return;
+  var tb = h.parentNode, off = h.dataset.off !== '1'; h.dataset.off = off ? '1' : '0'; h.querySelector('.v773-t').textContent = off ? '▸' : '▾';
+  var c = h.dataset.c, on = false;
+  Array.prototype.forEach.call(tb.children, function (r) { if (r === h) { on = true; return; } if (on && r.classList.contains('v773-gh')) on = false; if (on) r.classList.toggle('v773-off', off); });
+});
+
+/* Xóa / Thêm dòng: vẽ lại nhóm + đánh số lại theo thứ tự hiển thị */
+function wrapFns() {
+  if (typeof W.v729RemoveEditorRow === 'function' && !W.v729RemoveEditorRow.__v773) {
+    var rm = function (btn) {
+      var tr = btn && btn.closest && btn.closest('tr'), tb = tr && tr.parentNode;
+      if (tr) tr.remove();
+      if (tb && tb.id === 'v729_edit_rows') regroup(tb);
+    };
+    rm.__v773 = true; W.v729RemoveEditorRow = rm;
+  }
+  if (typeof W.v729AddEditorRow === 'function' && !W.v729AddEditorRow.__v773) {
+    var o = W.v729AddEditorRow, ad = function () {
+      var tb = D.getElementById('v729_edit_rows'), before = tb ? dataRows(tb).length : 0;
+      var r = o.apply(this, arguments);
+      if (tb) {
+        var rows = dataRows(tb), nw = rows.length > before ? rows[rows.length - 1] : null;
+        regroup(tb);
+        if (nw) { nw.classList.remove('v773-off'); try { nw.scrollIntoView({ block: 'center', behavior: 'smooth' }); var i = nw.querySelector('[data-k="tenVatTu"]'); if (i) i.focus(); } catch (e) { } }
+      }
+      return r;
+    };
+    ad.__v773 = true; W.v729AddEditorRow = ad;
+  }
+}
+/* lưu / duyệt: STT liên tục theo đúng thứ tự đã nhóm */
+function wrapApi() {
+  var o = W.pvApi; if (typeof o !== 'function' || o.__v773) return;
+  var w = function (action, data) {
+    try { if ((action === 'updatePhieu' || action === 'approvePhieu') && data && data.payload && Array.isArray(data.payload.items)) data.payload.items.forEach(function (x, i) { if (x && typeof x === 'object') x.stt = i + 1; }); } catch (e) { }
+    return o.apply(this, arguments);
+  };
+  Object.keys(o).forEach(function (k) { try { w[k] = o[k]; } catch (e) { } });
+  w.__v773 = true; W.pvApi = w;
+}
+function tick() {
+  try { wrapFns(); wrapApi(); var tb = D.getElementById('v729_edit_rows'); if (tb) boot(tb); } catch (e) { console.warn('[V773]', e); }
+}
+W.V773 = { regroup: regroup };
+setInterval(tick, 300); tick();
+})();
+</script>
+
 </body>
 </html>
